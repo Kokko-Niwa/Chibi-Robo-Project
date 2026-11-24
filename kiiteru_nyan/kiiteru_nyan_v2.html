@@ -1,0 +1,1115 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>聞いてるニャ</title>
+<!--
+  聞いてるニャ v2 —— 「動く叩き台」
+  ・この1ファイルだけで動く（ビルド不要・外部ライブラリなし）。Chrome / Edge で開く。
+  ・流れ： 聞く → 文字にする → "らしきもの"を抜く → リストに出す → 本人が選ぶ/捨てる
+  ・差し替え口は2つ： Listeners（聞く→文字） と Extractors（文字→らしきもの）。下の <script id="app"> を参照。
+  ・方針（なぜこうなっているか）は 仕様書 を先に読んでください。
+-->
+<style>
+  /* ===== 差し替え可能な設定（絵・色・文言） =====
+     ちびロボ・シリーズ共通のベース。"記憶・聞く"の合図だけ、ティール(--listen)で差す。 */
+  :root{
+    --bg:#fdf6ec;
+    --ink:#4a4039;
+    --accent:#e8a05c;        /* シリーズ共通の主色（ボタン） */
+    --accent-dark:#d2893f;
+    --listen:#5b9aa6;        /* 聞いてるニャ固有：記憶・聞くの合図 */
+    --listen-dark:#47808b;
+    --listen-bg:#eef6f7;
+    --panel:#fffdf8;
+    --muted:#9a8b7a;
+    --line:#ece0cd;
+    --shadow:0 6px 20px rgba(120,90,50,.12);
+    --radius:20px;
+    --cat-size:60px;         /* 猫の大きさ。画像差し替え時もここ */
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;height:100%}
+  body{
+    background:#efe3d2;color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Noto Sans JP",sans-serif;
+    display:flex;align-items:center;justify-content:center;
+    padding:16px;line-height:1.6;
+  }
+  button,input,textarea{font-family:inherit}
+  .app{
+    width:100%;max-width:420px;height:min(780px,94vh);
+    background:var(--panel);border-radius:var(--radius);
+    box-shadow:var(--shadow);overflow:hidden;position:relative;
+    display:flex;flex-direction:column;
+  }
+  .screen{display:none;flex:1;flex-direction:column;overflow:hidden}
+  .screen.active{display:flex}
+
+  h1{font-size:24px;margin:0}
+  .sub{color:var(--muted);font-size:13px;margin:2px 0 0}
+  .cat{font-size:var(--cat-size);line-height:1;user-select:none}
+
+  /* ボタン（シリーズ共通） */
+  .btn{
+    border:none;border-radius:16px;padding:15px;font-size:17px;font-weight:700;
+    background:var(--accent);color:#fff;cursor:pointer;width:100%;
+    box-shadow:0 4px 0 var(--accent-dark);transition:transform .05s,box-shadow .05s;
+  }
+  .btn:active{transform:translateY(3px);box-shadow:0 1px 0 var(--accent-dark)}
+  .btn.ghost{background:#fff;color:var(--accent-dark);border:2px solid var(--accent);box-shadow:none}
+  .btn.small{padding:11px;font-size:14px}
+  .linkbtn{border:none;background:none;color:var(--muted);font-size:12.5px;text-decoration:underline;cursor:pointer;padding:6px}
+
+  /* ============ 0. 起動時リマインダー（ロック/ホーム風） ============ */
+  #s-lock{background:linear-gradient(180deg,#2e3b40,#415057);color:#fff;padding:0}
+  .lock-time{font-size:64px;font-weight:300;text-align:center;margin:56px 0 2px;letter-spacing:2px}
+  .lock-date{text-align:center;color:#cdd8db;font-size:14px}
+  .remind-card{
+    margin:auto 20px 20px;background:rgba(255,255,255,.96);color:var(--ink);
+    border-radius:18px;padding:16px 18px;display:flex;gap:12px;align-items:center;
+    border-left:6px solid var(--listen);box-shadow:0 8px 24px rgba(0,0,0,.25);
+  }
+  .remind-card .cat{font-size:40px}
+  .remind-card b{color:var(--listen-dark)}
+  .remind-card small{color:#7d8f92}
+  .lock-note{color:#b9c6c9;font-size:12px;text-align:center;padding:0 24px 18px;margin:0}
+  .lock-open{margin:0 20px 28px}
+
+  /* ============ メイン共通：ヘッダ・タブ ============ */
+  .head{
+    padding:14px 14px 10px 20px;display:flex;gap:10px;align-items:center;
+    border-bottom:1px solid var(--line);
+  }
+  .head .cat{font-size:34px}
+  .gear{margin-left:auto;border:none;background:none;font-size:22px;cursor:pointer;color:var(--muted);padding:8px;border-radius:10px}
+
+  /* 聞く（耳）まわり */
+  .listen{display:flex;gap:8px;padding:12px 16px 0}
+  .ear{
+    flex:1.7;border:2px solid var(--listen);border-radius:14px;padding:12px;font-size:15px;font-weight:700;
+    background:var(--listen);color:#fff;cursor:pointer;
+  }
+  .ear.on{background:#fff;color:var(--listen-dark);animation:pulse 1.8s infinite}
+  .ear-sub{
+    flex:1;border:2px dashed var(--line);border-radius:14px;background:#fff;
+    color:var(--muted);font-weight:700;font-size:13px;cursor:pointer;
+  }
+  .live{
+    margin:8px 18px 0;font-size:12.5px;color:var(--muted);height:20px;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  }
+  .live.on{color:var(--listen-dark)}
+  @keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(91,154,166,.45)}50%{box-shadow:0 0 0 8px rgba(91,154,166,0)}}
+  @media (prefers-reduced-motion:reduce){.ear.on{animation:none}.sheet,.peek{transition:none}}
+
+  .note{
+    background:var(--listen-bg);color:#4d6b70;font-size:12.5px;
+    margin:8px 16px 0;padding:8px 12px;border-radius:12px;border:1px dashed var(--listen);
+  }
+  .tabs{display:flex;gap:8px;padding:10px 16px 4px}
+  .tabs button{
+    flex:1;padding:10px;border-radius:12px;border:2px solid var(--line);background:#fff;
+    color:var(--muted);font-weight:700;font-size:14px;cursor:pointer;
+  }
+  .tabs button.on{background:var(--listen);color:#fff;border-color:var(--listen)}
+
+  /* ============ リスト ============ */
+  .list{flex:1;overflow:auto;padding:8px 16px 96px}
+  .next-badge{
+    display:inline-block;background:var(--listen);color:#fff;font-size:11px;font-weight:700;
+    padding:3px 10px;border-radius:999px;margin:6px 2px 2px;
+  }
+  .item{
+    width:100%;text-align:left;background:#fff;border:1.5px solid var(--line);
+    border-radius:14px;padding:12px 14px;margin:8px 0;cursor:pointer;
+    display:flex;gap:12px;align-items:flex-start;color:var(--ink);
+  }
+  .item.next{border-color:var(--listen);background:var(--listen-bg)}
+  .item.past{opacity:.55}
+  .item .when{
+    flex:none;min-width:58px;text-align:center;font-weight:800;font-size:13px;
+    color:var(--listen-dark);background:#fff;border:1px solid var(--listen);
+    border-radius:10px;padding:6px 4px;line-height:1.25;white-space:pre-line;
+  }
+  .item .body{flex:1;min-width:0}
+  .item .ttl{font-size:16px;font-weight:700;margin:0;overflow-wrap:anywhere}
+  .item .src{font-size:11.5px;color:var(--muted);margin:3px 0 0}
+  .item .star{flex:none;color:#e8b84c;font-size:18px}
+  .empty{text-align:center;color:var(--muted);font-size:13.5px;padding:36px 12px}
+  .empty .cat{font-size:44px;margin-bottom:8px}
+
+  /* ============ 下の絞り込みバー ============ */
+  .bar{
+    position:absolute;left:0;right:0;bottom:0;display:flex;gap:8px;
+    padding:12px 16px;background:linear-gradient(180deg,rgba(255,253,248,0),var(--panel) 40%);
+  }
+  .chip{
+    flex:1;padding:12px;border-radius:14px;border:2px solid var(--line);background:#fff;
+    color:#7d6c5a;font-weight:700;font-size:13px;cursor:pointer;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  }
+  .chip.search{flex:.9;color:var(--muted);border-style:dashed}
+  .chip.active{border-color:var(--listen);color:var(--listen-dark);background:var(--listen-bg);border-style:solid}
+
+  /* ============ ボトムシート ============ */
+  .backdrop{position:absolute;inset:0;background:rgba(40,30,20,.4);display:none;z-index:5}
+  .backdrop.open{display:block}
+  .sheet{
+    position:absolute;left:0;right:0;bottom:0;background:var(--panel);z-index:6;
+    border-radius:20px 20px 0 0;padding:20px 20px 24px;transform:translateY(110%);
+    transition:transform .22s ease;box-shadow:0 -8px 24px rgba(0,0,0,.15);
+    max-height:92%;overflow:auto;visibility:hidden;
+  }
+  .sheet.open{transform:translateY(0);visibility:visible}
+  .sheet h2{font-size:18px;margin:0 0 4px}
+  .sheet .sub{margin-bottom:14px}
+  .grp-label{font-size:12px;color:var(--muted);font-weight:700;margin:12px 0 6px}
+  .seg{display:flex;flex-wrap:wrap;gap:8px}
+  .seg button{
+    padding:9px 12px;border-radius:999px;border:2px solid var(--line);background:#fff;
+    color:#7d6c5a;font-weight:700;cursor:pointer;font-size:13px;
+  }
+  .seg button.on{background:var(--listen);color:#fff;border-color:var(--listen)}
+  .sheet input[type=text],.sheet input[type=password],.sheet input[type=date],.sheet input[type=time],.sheet textarea{
+    width:100%;padding:12px 14px;border-radius:12px;border:2px solid var(--line);
+    font-size:16px;margin:4px 0 6px;background:#fff;color:var(--ink);
+  }
+  .sheet textarea{min-height:130px;resize:vertical;line-height:1.5}
+  .sheet .act{display:flex;flex-direction:column;gap:10px;margin-top:6px}
+  .sheet .note{margin:8px 0 0}
+  .quote{background:var(--listen-bg);border-radius:12px;padding:12px;font-weight:700;margin:4px 0 8px;overflow-wrap:anywhere}
+  .origin{font-size:12px;color:var(--muted);margin:0 2px 12px;overflow-wrap:anywhere}
+  .confirm{display:none;background:var(--listen-bg);border-radius:12px;padding:12px}
+  .confirm.open{display:block}
+  .confirm .row{display:flex;gap:8px}
+  .confirm .row > div{flex:1;min-width:0}
+  .confirm p{font-size:12.5px;color:#4d6b70;margin:0 0 6px}
+  .hide{display:none !important}
+
+  /* ============ トースト / そっと出る"つぎは" ============ */
+  .toast{
+    position:absolute;left:16px;right:16px;bottom:78px;background:var(--ink);color:#fff;
+    border-radius:14px;padding:11px 14px;font-size:13.5px;display:none;z-index:8;
+    align-items:center;gap:10px;box-shadow:0 6px 18px rgba(0,0,0,.25);
+  }
+  .toast.show{display:flex}
+  .toast span{flex:1}
+  .toast button{border:none;background:none;color:#ffd9a8;font-weight:700;font-size:13.5px;cursor:pointer;padding:4px 6px}
+  .peek{
+    position:absolute;left:14px;right:14px;top:12px;z-index:4;background:#fff;color:var(--ink);
+    border-radius:16px;padding:12px 14px;border-left:6px solid var(--listen);
+    box-shadow:0 8px 24px rgba(0,0,0,.22);display:flex;gap:10px;align-items:center;font-size:14px;
+    transform:translateY(-160%);transition:transform .3s ease;
+  }
+  .peek.show{transform:none}
+  .peek b{color:var(--listen-dark)}
+  .peek .cat{font-size:28px}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ======================= 0. 起動時リマインダー ======================= -->
+  <!-- 開くたび"次の予定"がそっと出る（push）。本物のロック画面表示は v2 の範囲外＝仕様書「お願いしたい所」 -->
+  <section class="screen active" id="s-lock">
+    <div class="lock-time" id="lock-time">--:--</div>
+    <div class="lock-date" id="lock-date"></div>
+    <div class="remind-card">
+      <div class="cat">🐱</div>
+      <div id="lock-msg"></div>
+    </div>
+    <p class="lock-note">※ 開くたび、次の予定がそっと出るにゃ。<br>見るたび「あ、次は〇〇」を思い出せる仕掛け。</p>
+    <div class="lock-open"><button class="btn" id="btn-open">アプリを開く</button></div>
+  </section>
+
+  <!-- ======================= メイン（開いたら即リスト） ======================= -->
+  <section class="screen" id="s-main">
+    <div class="peek" id="peek"><div class="cat">🐱</div><div id="peek-msg"></div></div>
+
+    <div class="head">
+      <div class="cat">🐱</div>
+      <div>
+        <h1>聞いてるニャ</h1>
+        <p class="sub">会話から"予定っぽいもの"を拾っとくにゃ</p>
+      </div>
+      <button class="gear" id="btn-gear" aria-label="設定">⚙</button>
+    </div>
+
+    <!-- 聞く：押してる間だけ聞く（常時聞き取りは v2 の範囲外） -->
+    <div class="listen">
+      <button class="ear" id="btn-listen">👂 聞いててにゃ</button>
+      <button class="ear-sub" id="btn-text">✍ 文字で入れる</button>
+    </div>
+    <div class="live" id="live">（いまは聞いてないにゃ）</div>
+
+    <div class="note">
+      拾ったのはぜんぶ"〜っぽい"やつにゃ。<b>要るのだけ</b>選んで、ちがうのは捨ててにゃ。
+    </div>
+
+    <!-- タブ：予定 / 手順（両方見えてワンタップ＝recognition） -->
+    <div class="tabs">
+      <button id="tab-yotei" class="on">予定らしきもの</button>
+      <button id="tab-tejun">手順らしきもの</button>
+    </div>
+
+    <div class="list" id="list"></div>
+
+    <!-- 下バー：絞り込み（手近）／さがす（奥・補助） -->
+    <div class="bar">
+      <button class="chip" id="chip-filter">⏱ 時間帯でしぼる</button>
+      <button class="chip search" id="chip-search">🔍 さがす</button>
+    </div>
+  </section>
+
+  <div class="backdrop" id="bd"></div>
+
+  <!-- ======================= シート：時間帯でしぼる ======================= -->
+  <!-- "探す(pull)"じゃなく、もう出てるリストを"しぼる"。ボタン選択＝思い出し不要 -->
+  <div class="sheet" id="sheet-filter">
+    <h2>時間帯でしぼるにゃ</h2>
+    <p class="sub">だいたいの"いつ頃 聞いた話か"でOK。選ぶだけにゃ。</p>
+    <div class="grp-label">いつ聞いた</div>
+    <div class="seg" id="seg-day"></div>
+    <div class="grp-label">時間帯</div>
+    <div class="seg" id="seg-band"></div>
+    <div class="act" style="margin-top:18px">
+      <button class="btn" data-close>この範囲で見る</button>
+      <button class="btn ghost small" id="btn-filter-clear">しぼるのをやめる</button>
+    </div>
+  </div>
+
+  <!-- ======================= シート：さがす（補助・支援者向け） ======================= -->
+  <div class="sheet" id="sheet-search">
+    <h2>ことばでさがす</h2>
+    <p class="sub">調べ物・支援者向けにゃ。</p>
+    <input type="text" id="q" placeholder="例）病院 / 〇〇さん / 書類 …">
+    <div class="note">
+      ふだんは <b>出番なしでOK</b> にゃ。<br>
+      上のリストで足りてれば、ここは使わないのが"正常"。
+    </div>
+    <div class="act" style="margin-top:16px">
+      <button class="btn ghost" data-close>とじる</button>
+      <button class="btn ghost small" id="btn-search-clear">さがすのをやめる</button>
+    </div>
+  </div>
+
+  <!-- ======================= シート：タップしたら（ratify＝選ぶ/捨てる/送る） ======================= -->
+  <div class="sheet" id="sheet-item">
+    <h2>これ、どうするにゃ？</h2>
+    <p class="sub">決めるのは、あなたにゃ。</p>
+    <div class="quote" id="item-quote">—</div>
+    <p class="origin" id="item-origin"></p>
+    <div class="act">
+      <button class="btn" id="btn-cal">📅 カレンダーに入れる</button>
+      <!-- 日時は"らしき"なので、入れる前に必ず本人が確かめる -->
+      <div class="confirm" id="confirm">
+        <p>日にちと時間は"っぽい"だけにゃ。<b>あってるか確かめて</b>から入れてにゃ。</p>
+        <div class="row">
+          <div><input type="date" id="cal-date" aria-label="日にち"></div>
+          <div><input type="time" id="cal-time" aria-label="時間（なければ空でOK）"></div>
+        </div>
+        <button class="btn small" id="btn-cal-go">この日時で入れる</button>
+      </div>
+      <button class="btn ghost" id="btn-star">⭐ 大事マーク（のこす）</button>
+      <button class="btn ghost small" id="btn-trash">🗑 これは違う（捨てる）</button>
+      <button class="linkbtn" id="btn-kind"></button>
+    </div>
+  </div>
+
+  <!-- ======================= シート：文字で入れる（マイクなしでも試せる） ======================= -->
+  <div class="sheet" id="sheet-text">
+    <h2>文字で入れるにゃ</h2>
+    <p class="sub">マイクが使えない時や、ためす時用にゃ。会話をそのまま貼ってOK。</p>
+    <textarea id="text-in" placeholder="例）明日の14時に歯医者だからね"></textarea>
+    <div class="act">
+      <button class="btn" id="btn-text-go">ここから拾う</button>
+      <button class="btn ghost small" id="btn-sample">サンプル会話を入れてみる</button>
+      <button class="btn ghost small" data-close>とじる</button>
+    </div>
+  </div>
+
+  <!-- ======================= シート：設定（作る人・支援者向け） ======================= -->
+  <div class="sheet" id="sheet-settings">
+    <h2>設定</h2>
+    <p class="sub">作る人・支援者向けにゃ。ふだんは触らなくてOK。</p>
+
+    <div class="grp-label">拾い方（文字 → "らしきもの"）</div>
+    <div class="seg" id="seg-extractor">
+      <button data-v="rule">かんたん版（鍵いらず）</button>
+      <button data-v="llm">LLM版</button>
+    </div>
+
+    <div id="llm-fields">
+      <div class="grp-label">LLMの宛先</div>
+      <div class="seg" id="seg-llmtype">
+        <button data-v="openai">OpenAI互換（ローカルLLMも）</button>
+        <button data-v="anthropic">Anthropic</button>
+      </div>
+      <div id="llm-base-wrap">
+        <div class="grp-label">URL（…/v1 まで）</div>
+        <input type="text" id="llm-base" placeholder="https://api.openai.com/v1  /  http://localhost:11434/v1">
+      </div>
+      <div class="grp-label">モデル名</div>
+      <input type="text" id="llm-model" placeholder="">
+      <div class="grp-label">APIキー（ローカルLLMなら空でOK）</div>
+      <input type="password" id="llm-key" autocomplete="off">
+    </div>
+
+    <div class="note">
+      <b>どこに何が出ていくか</b><br>
+      ・拾ったリストは、この端末のブラウザの中だけに保存。録音は残さないにゃ。<br>
+      ・かんたん版は、文字を外に出さない。LLM版は、会話の文字を上の宛先に送るにゃ。<br>
+      ・「聞いててにゃ」の文字起こしはブラウザの機能で、ふつうは音声が外のサーバーで処理されるにゃ。<br>
+      ・APIキーもこのブラウザに保存される。共有のパソコンでは入れないでにゃ。
+    </div>
+
+    <div class="grp-label">データ</div>
+    <div class="act">
+      <button class="btn ghost small" id="btn-export">書き出す（JSON・捨てた分もふくむ）</button>
+      <button class="btn ghost small" id="btn-clear">ぜんぶ消す</button>
+      <button class="btn" data-close>とじる</button>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" role="status"><span id="toast-msg"></span><button id="toast-undo" class="hide">もどす</button></div>
+</div>
+
+<!-- =====================================================================
+     core：DOMに触らない純ロジック（日付の解決・かんたん版の抜き出し・LLM用プロンプト・ICS）
+     Node でもそのまま読める（テスト用）。
+     ===================================================================== -->
+<script id="core">
+const KiiteruCore = (function(){
+  'use strict';
+  const WD = '日月火水木金土';
+  const pad = n => String(n).padStart(2,'0');
+  const ymd = d => d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate());
+  const fromYMD = s => { const a = s.split('-').map(Number); return new Date(a[0], a[1]-1, a[2]); };
+  const startOfDay = d => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const addDays = (d,n) => new Date(d.getFullYear(), d.getMonth(), d.getDate()+n);
+  const weekStart = d => addDays(d, -((d.getDay()+6)%7));          // 週は月曜はじまり
+  const dayDiff = (a,b) => Math.round((startOfDay(a)-startOfDay(b))/86400000);
+
+  /* ---------- 文字の下ごしらえ ---------- */
+  function kanjiNum(s){
+    const map = {'〇':0,'一':1,'二':2,'三':3,'四':4,'五':5,'六':6,'七':7,'八':8,'九':9};
+    if (s.indexOf('十') >= 0){
+      const p = s.split('十');
+      return (p[0] ? map[p[0]] : 1)*10 + (p[1] ? map[p[1]] : 0);
+    }
+    return Array.from(s).reduce((n,c)=>n*10+map[c],0);
+  }
+  function normalize(t){
+    return String(t)
+      .replace(/[０-９]/g, c=>String.fromCharCode(c.charCodeAt(0)-0xFEE0))
+      .replace(/：/g,':').replace(/／/g,'/')
+      .replace(/[〇一二三四五六七八九十]+(?=\s*(?:時|分|日(?!曜)|月(?!曜)|錠|回|粒|包))/g, s=>String(kanjiNum(s)));
+  }
+  function splitUtterances(text){
+    return String(text).split(/[\n。！？!?]+|[「」]/).map(s=>s.trim()).filter(s=>s.length>=3);
+  }
+  const FILLER = /^(?:あっ、?|あ、|あー、|えっと、?|えーと、?|えー、|あのー?、|あのさ、|ねえ、|ねぇ、|そうだ、|そういえば、?|そうそう、|それと、|あと、|で、|じゃあ、|うん、)\s*/;
+  function cleanTitle(u){
+    let t = u.replace(/[「」]/g,'').trim(), prev;
+    do { prev = t; t = t.replace(FILLER,''); } while (t !== prev);
+    return t.length > 30 ? t.slice(0,29) + '…' : t;
+  }
+
+  /* ---------- "いつ"を読む（ぜんぶ"っぽい"扱い） ---------- */
+  function monthDay(M, D, today){
+    let d = new Date(today.getFullYear(), M-1, D);
+    if (d.getMonth() !== M-1) return null;                        // 2月31日 など
+    if (dayDiff(d, today) < -30) d = new Date(today.getFullYear()+1, M-1, D);
+    return d;
+  }
+  function parseWhen(u, now){
+    const today = startOfDay(now);
+    const out = {date:null, approx:null, anchor:null, text:''};
+    const set = (d, m) => { if (d){ out.date = ymd(d); out.text = m[0]; } return out; };
+    const vague = (label, d, m) => { out.approx = label; out.anchor = ymd(d); out.text = m[0]; return out; };
+    let m;
+    if ((m = u.match(/(\d{1,2})月(\d{1,2})日/)) || (m = u.match(/(?<!\d)(\d{1,2})\/(\d{1,2})(?!\d)/)))
+      return set(monthDay(+m[1], +m[2], today), m);
+    if ((m = u.match(/明後日|あさって/))) return set(addDays(today,2), m);
+    if ((m = u.match(/明日|あした|明朝|明晩/))) return set(addDays(today,1), m);
+    if ((m = u.match(/今日|本日|今夜|今晩|今朝/))) return set(today, m);
+    if ((m = u.match(/(今週|来週|再来週|さ来週)の?([月火水木金土日])曜/))){
+      const wk = m[1]==='今週' ? 0 : m[1]==='来週' ? 7 : 14;
+      return set(addDays(weekStart(today), wk + (WD.indexOf(m[2])+6)%7), m);
+    }
+    if ((m = u.match(/(?:今度|次)の([月火水木金土日])曜/))){
+      const diff = (WD.indexOf(m[1]) - today.getDay() + 7) % 7 || 7;
+      return set(addDays(today, diff), m);
+    }
+    if ((m = u.match(/([月火水木金土日])曜/)))
+      return set(addDays(today, (WD.indexOf(m[1]) - today.getDay() + 7) % 7), m);
+    if ((m = u.match(/(?<![\d月\/])(\d{1,2})日(?![中間目前後おかごぶ])/))){
+      const D = +m[1];
+      if (D >= 1 && D <= 31){
+        let d = new Date(today.getFullYear(), today.getMonth(), D);
+        if (d.getDate() !== D || d < today) d = new Date(today.getFullYear(), today.getMonth()+1, D);
+        if (d.getDate() === D) return set(d, m);
+      }
+    }
+    if ((m = u.match(/再来週|さ来週/))) return vague('再来週', addDays(weekStart(today),14), m);
+    if ((m = u.match(/来週/)))   return vague('来週', addDays(weekStart(today),7), m);
+    if ((m = u.match(/今週末|週末/))) return vague('週末', addDays(weekStart(today),5), m);
+    if ((m = u.match(/今週/)))   return vague('今週', today, m);
+    if ((m = u.match(/月末/)))   return vague('月末', new Date(today.getFullYear(), today.getMonth()+1, 0), m);
+    if ((m = u.match(/来月/)))   return vague('来月', new Date(today.getFullYear(), today.getMonth()+1, 1), m);
+    if ((m = u.match(/今月/)))   return vague('今月', today, m);
+    if ((m = u.match(/(?<!\d)(\d{1,2})月(?!\d)/)) && +m[1] >= 1 && +m[1] <= 12){
+      let d = new Date(today.getFullYear(), +m[1]-1, 1);
+      if (d < new Date(today.getFullYear(), today.getMonth(), 1)) d = new Date(today.getFullYear()+1, +m[1]-1, 1);
+      return vague(m[1] + '月', d, m);
+    }
+    return out;
+  }
+  function parseTime(u){
+    const out = {time:null, label:null, text:''};
+    const m = u.match(/(午前|午後|朝|お昼|昼|夕方|夜|晩|深夜|夜中)?の?\s*(\d{1,2})(?:時(?![間的期代点々])(?:(\d{1,2})分|(半))?|:(\d{2}))/);
+    if (m){
+      let h = +m[2];
+      const min = m[3] ? +m[3] : m[4] ? 30 : m[5] ? +m[5] : 0;
+      const ap = m[1];
+      if (/午後|夕方|夜|晩/.test(ap||'') && h < 12) h += 12;
+      else if (/昼/.test(ap||'') && h <= 4) h += 12;
+      else if (!ap && h >= 1 && h <= 6) h += 12;                  // "3時"だけ → 昼の3時だろう、と当て推量
+      if (h <= 24 && min < 60){ out.time = pad(h % 24) + ':' + pad(min); out.text = m[0]; return out; }
+    }
+    const w = u.match(/今朝|朝|午前|お昼|昼|午後|夕方|今夜|今晩|夜|晩/);
+    if (w){
+      out.label = /朝/.test(w[0]) ? '朝' : /昼/.test(w[0]) ? '昼' : /今夜|今晩|夜|晩/.test(w[0]) ? '夜' : w[0];
+      out.text = w[0];
+    }
+    return out;
+  }
+
+  /* ---------- かんたん版の抜き出し（鍵いらず・雑でよい・外に出さない） ---------- */
+  const RECUR = /毎(?:週|日|朝|晩|月|回|年)|いつも|のたびに/;
+  const TEJUN = /てから|でから|した後|したあと|の前に|のあとに|の後に|まず(?!い)|次に|そのあと|最後に|食前|食後|食間|寝る前|\d+\s*(?:錠|粒|包|滴)|やり方|手順|使い方|順番|のときは|の時は|場合は|暗証|パスワード|ゴミ|ごみ|資源|回収日/;
+  const YOTEI = /予約|約束|締め?切り?|〆切|しめきり|提出|までに|集合|待ち合わせ|面談|会議|打ち合わせ|診察|受診|検診|健診|通院|面接|訪問|参観|懇談/;
+  const PASTWORD = /昨日|きのう|おととい|先週|先月|さっき|この前|こないだ/;
+  const PASTEND = /(?:た|だった|でした|ました)(?:ね|よ|な|なあ|わ)?$/;
+  const CHAT = /天気|暑い|寒い|眠い|ねむい|疲れ|楽しかった|おいしい|美味しい/;
+
+  function extractRule(text, now){
+    const items = [];
+    for (const raw of splitUtterances(text)){
+      const u = normalize(raw);
+      const recur = RECUR.test(u), tejun = TEJUN.test(u), kw = YOTEI.test(u);
+      const when = recur ? {date:null, approx:null, anchor:null, text:''} : parseWhen(u, now);
+      const tm = parseTime(u);
+      const hasDate = !!(when.date || when.approx);
+      let kind = null;
+      if (recur || (tejun && !hasDate && !tm.time)) kind = 'tejun';
+      else if (hasDate || tm.time || kw) kind = 'yotei';
+      if (!kind) continue;
+      if (kind === 'yotei'){
+        if (PASTWORD.test(u) && !hasDate && !kw) continue;         // 終わった話
+        if (CHAT.test(u) && !kw && !tm.time) continue;             // 雑談
+        if (when.date === ymd(now) && !tm.time && !kw && PASTEND.test(u)) continue;   // 「今日は〜だった」
+      }
+      const it = {kind:kind, title:cleanTitle(raw), quote:raw, date:null, time:null, timeLabel:null,
+                  approx:null, anchor:null, whenText:[when.text, tm.text].filter(Boolean).join(' ')};
+      if (kind === 'yotei'){
+        it.date = when.date; it.approx = when.approx; it.anchor = when.anchor;
+        it.time = tm.time; it.timeLabel = tm.label;
+        if (!hasDate && tm.time){                                  // 時刻だけ → まだ来てなければ今日、と当て推量
+          const hm = tm.time.split(':').map(Number);
+          if (hm[0]*60 + hm[1] > now.getHours()*60 + now.getMinutes()) it.date = ymd(now);
+        }
+      }
+      items.push(it);
+    }
+    return items;
+  }
+
+  /* ---------- LLM版：プロンプトと、返事の読み取り ---------- */
+  function buildLLMPrompt(text, now){
+    const system = [
+      'あなたは「聞いてるニャ」の抜き出し係です。日常会話の書き起こしから、(1)予定らしきもの (2)手順らしきもの を拾います。',
+      '使う人は、聞いたことを覚えておくのが難しい人です。あとで本人が一覧を見て「要る／ちがう」を自分で選びます。',
+      '',
+      'ルール:',
+      '- 会話に出ていないことは足さない。推測で日付や時刻を埋めない。あいまいなら null。',
+      '- 迷ったら拾う（本人が捨てられるので、拾いもらしより拾いすぎのほうがまし）。ただし雑談・感想・もう終わった話は拾わない。',
+      '- title は話し言葉を生かして短く（20字めやす）。断定しない。例:「歯医者、14時？」「木曜 山田さんとランチ的な」',
+      '- kind: "yotei"=日時のある用事・約束・締め切り ／ "tejun"=やり方・決まりごと・くり返すこと（ゴミの日、薬の飲み方、操作の順番）',
+      '- date は YYYY-MM-DD、time は HH:MM（24時間）。「今日」の日付を基準に解決する。',
+      '- when_text は会話の中の言い回しそのまま（例「来週の火曜まで」）。',
+      '- quote は根拠になった発話をそのまま抜く（要約しない）。',
+      '',
+      '出力は JSON 配列だけ。説明文は書かない。何もなければ []。',
+      '[{"kind":"yotei","title":"…","date":"2026-01-15","time":"14:00","when_text":"明日の14時","quote":"…"}]'
+    ].join('\n');
+    const user = '今日: ' + ymd(now) + '（' + WD[now.getDay()] + '） 現在時刻: ' + pad(now.getHours()) + ':' + pad(now.getMinutes())
+               + '\n\n書き起こし:\n' + text;
+    return {system:system, user:user};
+  }
+  function parseLLMResponse(str){
+    const s = String(str), a = s.indexOf('['), b = s.lastIndexOf(']');
+    if (a < 0 || b <= a) throw new Error('LLMの返事にJSON配列が見つからない');
+    const arr = JSON.parse(s.slice(a, b+1));
+    if (!Array.isArray(arr)) throw new Error('LLMの返事が配列でない');
+    return arr.filter(x => x && typeof x.title === 'string' && x.title.trim()).map(x => {
+      const date = /^\d{4}-\d{2}-\d{2}$/.test(x.date||'') ? x.date : null;
+      const time = /^\d{1,2}:\d{2}$/.test(x.time||'') ? pad(+x.time.split(':')[0]) + ':' + x.time.split(':')[1] : null;
+      const kind = x.kind === 'tejun' ? 'tejun' : 'yotei';
+      return {kind:kind, title:x.title.trim().slice(0,40), quote:String(x.quote||x.title).trim(),
+              date:kind==='yotei'?date:null, time:kind==='yotei'?time:null, timeLabel:null, approx:null, anchor:null,
+              whenText:String(x.when_text||'').trim()};
+    });
+  }
+
+  /* ---------- 表示用 ---------- */
+  function dayLabel(dateStr, now){
+    const d = fromYMD(dateStr), diff = dayDiff(d, now), wd = '（' + WD[d.getDay()] + '）';
+    if (diff === 0) return '今日' + wd;
+    if (diff === 1) return '明日' + wd;
+    if (diff === 2) return '明後日' + wd;
+    if (diff === -1) return '昨日' + wd;
+    return (d.getMonth()+1) + '月' + d.getDate() + '日' + wd;      // 3日以上先は「〇月〇日（曜）」
+  }
+  /* 時刻を「午前/午後 〇時〇分」に。分が0なら省く（午後2時 / 午後2時30分 / 午前9時） */
+  function jpTime(hhmm){
+    const a = hhmm.split(':'), H = +a[0], M = +a[1];
+    return (H < 12 ? '午前' : '午後') + (H % 12) + '時' + (M ? M + '分' : '');   // H%12: 0時→午前0時, 12時→午後0時
+  }
+  /* リスト左の箱。"?" は「っぽい」の合図。本人が確かめた日時（confirmed）は "?" を外す */
+  function whenLabel(it, now){
+    if (it.kind === 'tejun') return '手順';
+    const q = it.confirmed ? '' : '?';
+    const t = it.time ? jpTime(it.time) + q : it.timeLabel ? it.timeLabel + q : null;
+    if (it.date) return dayLabel(it.date, now) + '\n' + (t || (q ? 'っぽい' : '終日'));
+    if (it.approx) return it.approx + '\n' + (t || 'ごろ?');
+    return 'いつ?\n' + (t || '—');
+  }
+  function heardLabel(iso, now){
+    const d = new Date(iso), diff = dayDiff(d, now), hm = jpTime(pad(d.getHours()) + ':' + pad(d.getMinutes()));
+    if (diff === 0) return '今日 ' + hm;
+    if (diff === -1) return '昨日 ' + hm;
+    if (diff === -2) return 'おととい ' + hm;
+    return (d.getMonth()+1) + '月' + d.getDate() + '日（' + WD[d.getDay()] + '）' + hm;   // 方針7: 2日以上前でも曜日と時刻を落とさない
+  }
+  const keyOf = it => it.kind + '|' + String(it.title).replace(/[\s、。，．,.!?！？「」…・]/g,'');
+  /* 並べるための時刻。null＝日付なし */
+  function sortTime(it){
+    const base = it.date || it.anchor;
+    if (!base) return null;
+    const d = fromYMD(base);
+    if (it.time){ const hm = it.time.split(':').map(Number); d.setHours(hm[0], hm[1]); } else d.setHours(23, 59);
+    return d.getTime();
+  }
+  /* いちばん近い"つぎ"：日にちの分かってる予定で、まだ過ぎてないもの */
+  function nextItem(items, now){
+    const c = items.filter(i => i.kind==='yotei' && i.status!=='discarded' && i.date)
+      .map(i => ({i:i, t:sortTime(i)})).filter(x => x.t >= now.getTime() - 30*60000)
+      .sort((a,b) => a.t - b.t);
+    return c.length ? c[0].i : null;
+  }
+
+  /* ---------- カレンダー書き出し（.ics） ---------- */
+  function buildICS(it, date, time, stamp){
+    const esc = s => String(s).replace(/\\/g,'\\\\').replace(/;/g,'\\;').replace(/,/g,'\\,').replace(/\r?\n/g,'\\n');
+    const z = d => d.getUTCFullYear() + pad(d.getUTCMonth()+1) + pad(d.getUTCDate()) + 'T' + pad(d.getUTCHours()) + pad(d.getUTCMinutes()) + pad(d.getUTCSeconds()) + 'Z';
+    const compact = d => d.getFullYear() + pad(d.getMonth()+1) + pad(d.getDate());
+    const day = fromYMD(date);
+    const lines = ['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//kiiteru-nyan//v2//JA','BEGIN:VEVENT',
+      'UID:' + it.id + '@kiiteru-nyan', 'DTSTAMP:' + z(stamp)];
+    if (time){
+      const hm = time.split(':').map(Number);
+      const s = new Date(day.getFullYear(), day.getMonth(), day.getDate(), hm[0], hm[1]);
+      const e = new Date(s.getTime() + 60*60000);
+      const loc = d => compact(d) + 'T' + pad(d.getHours()) + pad(d.getMinutes()) + '00';
+      lines.push('DTSTART:' + loc(s), 'DTEND:' + loc(e));
+    } else {
+      lines.push('DTSTART;VALUE=DATE:' + compact(day), 'DTEND;VALUE=DATE:' + compact(addDays(day,1)));
+    }
+    lines.push('SUMMARY:' + esc(it.title), 'DESCRIPTION:' + esc('聞いてるニャが会話から拾ったにゃ\n「' + it.quote + '」'),
+      'END:VEVENT','END:VCALENDAR');
+    return lines.join('\r\n') + '\r\n';
+  }
+
+  return {ymd:ymd, fromYMD:fromYMD, addDays:addDays, dayDiff:dayDiff, normalize:normalize, splitUtterances:splitUtterances,
+          cleanTitle:cleanTitle, parseWhen:parseWhen, parseTime:parseTime, extractRule:extractRule,
+          buildLLMPrompt:buildLLMPrompt, parseLLMResponse:parseLLMResponse, dayLabel:dayLabel, jpTime:jpTime, whenLabel:whenLabel,
+          heardLabel:heardLabel, keyOf:keyOf, sortTime:sortTime, nextItem:nextItem, buildICS:buildICS};
+})();
+if (typeof module !== 'undefined') module.exports = KiiteruCore;
+</script>
+
+<!-- =====================================================================
+     app：部品（保存 / 聞く / 抜き出す）と画面
+     ★差し替え口★  Listeners … 聞く→文字     Extractors … 文字→"らしきもの"
+     ===================================================================== -->
+<script id="app">
+(function(){
+  'use strict';
+  const C = KiiteruCore;
+  const $ = id => document.getElementById(id);
+  function el(tag, cls, text){ const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+  const lsGet = k => { try { return localStorage.getItem(k); } catch(e){ return null; } };
+  const lsSet = (k,v) => { try { localStorage.setItem(k, v); } catch(e){} };
+
+  /* ================= 0. 設定 ================= */
+  const DEFAULTS = {extractor:'rule', llmType:'openai', llmBase:'https://api.openai.com/v1', llmModel:'', llmKey:''};
+  const Settings = (function(){
+    let s = Object.assign({}, DEFAULTS);
+    try { Object.assign(s, JSON.parse(lsGet('kiiteru.settings') || '{}')); } catch(e){}
+    return {
+      get: () => s,
+      set(patch){ Object.assign(s, patch); lsSet('kiiteru.settings', JSON.stringify(s)); return s; }
+    };
+  })();
+
+  /* ================= 1. Store（保存） =================
+     item = { id, kind:'yotei'|'tejun', title, quote（もとの発話）, date, time, timeLabel, approx, anchor, whenText,
+              heardAt, status:'new'|'calendar'|'discarded', starred, confirmed, source:'mic'|'text', extractor:'rule'|'llm' }
+     いまは localStorage。差し替えるならこの5つの関数を保てばよい。 */
+  const Store = (function(){
+    let items = [];
+    try { items = JSON.parse(lsGet('kiiteru.items') || '[]'); } catch(e){}
+    const persist = () => lsSet('kiiteru.items', JSON.stringify(items));
+    return {
+      all: () => items,
+      get: id => items.find(i => i.id === id),
+      add(list){ items.push.apply(items, list); persist(); },
+      update(id, patch){ const it = items.find(i => i.id === id); if (it){ Object.assign(it, patch); persist(); } return it; },
+      clear(){ items = []; persist(); },
+      exportJSON: () => JSON.stringify({app:'kiiteru-nyan', version:2, exportedAt:new Date().toISOString(), items:items}, null, 2)
+    };
+  })();
+
+  /* ================= 2. Listeners（聞く→文字）★差し替え口★ =================
+     約束： supported() / start({onInterim(text), onFinal(text), onState(bool), onError(code)}) / stop()
+     いまはブラウザ内蔵の音声認識。Whisper等に替えるなら、同じ約束の部品を足して ACTIVE_LISTENER を替える。 */
+  const Listeners = {
+    webspeech: (function(){
+      const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+      let rec = null, wanted = false, cb = null;
+      function boot(){
+        rec = new SR();
+        rec.lang = 'ja-JP'; rec.continuous = true; rec.interimResults = true;
+        rec.onresult = e => {
+          let interim = '';
+          for (let i = e.resultIndex; i < e.results.length; i++){
+            const r = e.results[i], t = r[0].transcript;
+            if (r.isFinal) cb.onFinal(t.trim()); else interim += t;
+          }
+          if (interim) cb.onInterim(interim);
+        };
+        rec.onerror = e => {
+          if (e.error === 'no-speech' || e.error === 'aborted') return;   // 無音はふつうのこと
+          wanted = false; cb.onError(e.error);
+        };
+        rec.onend = () => {                                              // ブラウザは無音が続くと勝手に切る → つなぎ直す
+          if (wanted) setTimeout(() => { if (wanted){ try { boot(); } catch(_){ wanted = false; cb.onState(false); } } }, 300);
+          else cb.onState(false);
+        };
+        rec.start();
+      }
+      return {
+        supported: () => !!SR,
+        start(callbacks){ cb = callbacks; wanted = true; boot(); cb.onState(true); },
+        stop(){ wanted = false; try { rec && rec.stop(); } catch(_){} }
+      };
+    })()
+  };
+  const ACTIVE_LISTENER = 'webspeech';
+
+  /* ================= 3. Extractors（文字→"らしきもの"）★差し替え口★ =================
+     約束： async (text, now) => [{kind, title, quote, date, time, timeLabel, approx, anchor, whenText}]
+     ・rule … 正規表現の雑な版。鍵いらず・外に出さない。
+     ・llm  … LLMに投げる版。プロンプトは core の buildLLMPrompt。 */
+  async function callLLM(system, user){
+    const s = Settings.get();
+    if (s.llmType === 'anthropic'){
+      const r = await fetch('https://api.anthropic.com/v1/messages', {
+        method:'POST',
+        headers:{'content-type':'application/json', 'x-api-key':s.llmKey, 'anthropic-version':'2023-06-01',
+                 'anthropic-dangerous-direct-browser-access':'true'},
+        body: JSON.stringify({model:s.llmModel, max_tokens:1500, system:system, messages:[{role:'user', content:user}]})
+      });
+      if (!r.ok) throw new Error('LLM ' + r.status);
+      const j = await r.json();
+      return (j.content || []).map(b => b.text || '').join('');
+    }
+    const headers = {'content-type':'application/json'};
+    if (s.llmKey) headers.authorization = 'Bearer ' + s.llmKey;
+    const r = await fetch(s.llmBase.replace(/\/+$/,'') + '/chat/completions', {
+      method:'POST', headers:headers,
+      body: JSON.stringify({model:s.llmModel, messages:[{role:'system', content:system}, {role:'user', content:user}]})
+    });
+    if (!r.ok) throw new Error('LLM ' + r.status);
+    const j = await r.json();
+    return j.choices[0].message.content;
+  }
+  const Extractors = {
+    rule: async (text, now) => C.extractRule(text, now),
+    llm:  async (text, now) => { const p = C.buildLLMPrompt(text, now); return C.parseLLMResponse(await callLLM(p.system, p.user)); }
+  };
+
+  /* ================= 4. 流れ（文字が来た → 抜く → 重複を落とす → 保存） ================= */
+  let buffer = [], timer = null, busy = false;
+  function feed(text, source){
+    if (!text || !text.trim()) return;
+    buffer.push({text:text.trim(), source:source, at:new Date()});   // 聞いた時刻は「届いた瞬間」に打つ（flush時刻ではなく。方針7）
+    clearTimeout(timer);
+    // 話の切れ目を少し待ってからまとめて抜く
+    const wait = source === 'mic' ? (Settings.get().extractor === 'llm' ? 4000 : 1500) : 0;
+    timer = setTimeout(flush, wait);
+  }
+  async function flush(){
+    if (busy){ timer = setTimeout(flush, 800); return; }
+    if (!buffer.length) return;
+    const batch = buffer; buffer = []; busy = true;
+    const text = batch.map(b => b.text).join('\n'), source = batch[0].source, now = new Date();
+    const heard = (batch[0] && batch[0].at) || now;                 // このバッチの「一番早い発話」が届いた時刻＝聞いた時刻
+    const s = Settings.get();
+    let used = s.extractor, found = [], fell = false;
+    try {
+      if (used === 'llm'){
+        if (!s.llmModel) throw new Error('モデル名が空');
+        setLive('…拾い中にゃ', true);
+        found = await Extractors.llm(text, now);
+      } else found = await Extractors.rule(text, now);
+    } catch(err){
+      console.warn('[kiiteru] LLM版に失敗 → かんたん版で拾う', err);
+      used = 'rule'; fell = true; found = await Extractors.rule(text, now);
+    }
+    const seen = new Set(Store.all().map(C.keyOf));               // 捨てた物も含めて、同じ物は二度拾わない
+    const fresh = [];
+    for (const f of found){
+      const k = C.keyOf(f);
+      if (seen.has(k)) continue;
+      seen.add(k);
+      fresh.push(Object.assign({}, f, {
+        id: (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : 'i' + Date.now() + Math.random().toString(16).slice(2),
+        heardAt: heard.toISOString(), status:'new', starred:false, confirmed:false, source:source, extractor:used
+      }));
+    }
+    if (fresh.length) Store.add(fresh);
+    busy = false;
+    if (listening) setLive('（聞いてるにゃ…）', true);
+    render();
+    const pre = fell ? 'LLMにつながらなかったにゃ。かんたん版で、' : '';
+    if (fresh.length) toast(pre + fresh.length + 'こ 拾ったにゃ。');
+    else if (source !== 'mic' || fell) toast(pre + 'あたらしく拾うものは、なかったにゃ。');
+  }
+
+  /* ================= 5. 画面 ================= */
+  const state = {tab:'yotei', day:null, band:null, q:'', cur:null};
+  const DAYS = ['今日','昨日','今週','先週','もっと前'];
+  const BANDS = [['朝',5,9],['午前',9,12],['午後',12,16],['夕方',16,19],['夜',19,24],['夜中',0,5]];
+
+  function go(id){
+    document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+    $(id).classList.add('active');
+  }
+
+  /* ---- "つぎは"（push） ---- */
+  function nextMessage(target, withHint){
+    const now = new Date(), n = C.nextItem(Store.all(), now);
+    target.textContent = '';
+    if (!n){
+      target.appendChild(document.createTextNode('いまのところ、拾った予定はないにゃ。'));
+      return false;
+    }
+    target.appendChild(document.createTextNode('つぎは '));
+    target.appendChild(el('b', null, C.dayLabel(n.date, now) + (n.time ? ' ' + C.jpTime(n.time) : '') + '「' + n.title + '」'));
+    target.appendChild(document.createTextNode(n.confirmed ? '、だにゃ。' : '、っぽいにゃ。'));
+    if (withHint){ target.appendChild(el('br')); target.appendChild(el('small', null, n.confirmed ? 'カレンダーに入れてあるにゃ ♪' : 'あってるかは、開いて確かめてにゃ ♪')); }
+    return true;
+  }
+  function tick(){
+    const d = new Date();
+    $('lock-time').textContent = d.getHours() + ':' + String(d.getMinutes()).padStart(2,'0');
+    $('lock-date').textContent = (d.getMonth()+1) + '月' + d.getDate() + '日（' + '日月火水木金土'[d.getDay()] + '）';
+  }
+  let peekTimer = null;
+  function peek(){
+    if (!$('s-main').classList.contains('active') || curSheet) return;
+    if (!nextMessage($('peek-msg'), false)) return;
+    $('peek').classList.add('show');
+    clearTimeout(peekTimer);
+    peekTimer = setTimeout(() => $('peek').classList.remove('show'), 4500);   // そっと出て、すぐ消える
+  }
+
+  /* ---- リスト ---- */
+  function matchFilter(it, now){
+    const h = new Date(it.heardAt), diff = C.dayDiff(h, now);
+    if (state.day){
+      const ws = C.addDays(now, -((now.getDay()+6)%7)), sinceWeek = C.dayDiff(h, ws);
+      const ok = state.day==='今日' ? diff===0 : state.day==='昨日' ? diff===-1 : state.day==='今週' ? sinceWeek>=0
+               : state.day==='先週' ? (sinceWeek<0 && sinceWeek>=-7) : sinceWeek<-7;
+      if (!ok) return false;
+    }
+    if (state.band){
+      const b = BANDS.find(x => x[0] === state.band), hr = h.getHours();
+      if (!(hr >= b[1] && hr < b[2])) return false;
+    }
+    if (state.q){
+      const q = state.q.toLowerCase();
+      if ((it.title + ' ' + it.quote).toLowerCase().indexOf(q) < 0) return false;
+    }
+    return true;
+  }
+  function sorted(list, now){
+    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const rank = it => { const t = C.sortTime(it); return t == null ? 1 : t < start ? 2 : 0; };   // これから → 日付なし → 過ぎた
+    return list.slice().sort((a,b) => {
+      const ra = rank(a), rb = rank(b);
+      if (ra !== rb) return ra - rb;
+      if (ra === 1) return new Date(b.heardAt) - new Date(a.heardAt);
+      return C.sortTime(a) - C.sortTime(b);
+    });
+  }
+  function render(){
+    const now = new Date(), all = Store.all().filter(i => i.status !== 'discarded');
+    const count = k => all.filter(i => i.kind === k).length;
+    $('tab-yotei').textContent = '予定らしきもの' + (count('yotei') ? '（' + count('yotei') + '）' : '');
+    $('tab-tejun').textContent = '手順らしきもの' + (count('tejun') ? '（' + count('tejun') + '）' : '');
+    $('tab-yotei').classList.toggle('on', state.tab === 'yotei');
+    $('tab-tejun').classList.toggle('on', state.tab === 'tejun');
+
+    const narrowed = !!(state.day || state.band || state.q);
+    const list = sorted(all.filter(i => i.kind === state.tab && matchFilter(i, now)), now);
+    const box = $('list'); box.textContent = '';
+    if (!list.length){
+      const e = el('div', 'empty');
+      e.appendChild(el('div', 'cat', '🐱'));
+      e.appendChild(el('div', null, narrowed ? 'この範囲には、なにもないにゃ。'
+        : all.length ? 'こっちは、まだ何も拾ってないにゃ。'
+        : 'まだ何も拾ってないにゃ。\n上の「聞いててにゃ」を押すか、「文字で入れる」で試してにゃ。'));
+      e.lastChild.style.whiteSpace = 'pre-line';
+      box.appendChild(e);
+    }
+    const next = (!narrowed && state.tab === 'yotei') ? C.nextItem(all, now) : null;
+    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    for (const it of list){
+      const isNext = next && next.id === it.id;
+      if (isNext) box.appendChild(el('span', 'next-badge', 'つぎはこれにゃ ▾'));
+      const t = C.sortTime(it);
+      const b = el('button', 'item' + (isNext ? ' next' : '') + (t != null && t < start ? ' past' : ''));
+      b.appendChild(el('div', 'when', C.whenLabel(it, now)));
+      const body = el('div', 'body');
+      body.appendChild(el('p', 'ttl', it.title));
+      body.appendChild(el('p', 'src', '会話から拾ったにゃ・' + C.heardLabel(it.heardAt, now) + (it.status === 'calendar' ? '・📅 入れた' : '')));
+      b.appendChild(body);
+      b.appendChild(el('div', 'star', it.starred ? '★' : '☆'));
+      b.addEventListener('click', () => openItem(it.id));
+      box.appendChild(b);
+    }
+    const f = [state.day, state.band].filter(Boolean).join('・');
+    $('chip-filter').textContent = f ? '⏱ ' + f : '⏱ 時間帯でしぼる';
+    $('chip-filter').classList.toggle('active', !!f);
+    $('chip-search').textContent = state.q ? '🔍 ' + state.q : '🔍 さがす';
+    $('chip-search').classList.toggle('active', !!state.q);
+    nextMessage($('lock-msg'), true);
+  }
+
+  /* ---- ボトムシート ---- */
+  let curSheet = null;
+  function openSheet(id){
+    closeSheet();
+    curSheet = id;
+    $('bd').classList.add('open');
+    $(id).classList.add('open');
+    $('peek').classList.remove('show');
+    $('toast').classList.remove('show');
+  }
+  function closeSheet(){
+    $('bd').classList.remove('open');
+    document.querySelectorAll('.sheet').forEach(s => s.classList.remove('open'));
+    curSheet = null;
+  }
+
+  /* ---- トースト ---- */
+  let toastTimer = null;
+  function toast(msg, undo){
+    $('toast-msg').textContent = msg;
+    const u = $('toast-undo');
+    u.classList.toggle('hide', !undo);
+    u.onclick = undo ? () => { undo(); $('toast').classList.remove('show'); } : null;
+    $('toast').classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => $('toast').classList.remove('show'), undo ? 6000 : 3200);
+  }
+
+  /* ---- 項目をタップ → ratify（選ぶ / 捨てる / 送る） ---- */
+  function openItem(id){
+    const it = Store.get(id); if (!it) return;
+    state.cur = id;
+    const now = new Date();
+    $('item-quote').textContent = '「' + it.title + '」';
+    $('item-origin').textContent = (it.quote && it.quote !== it.title ? '聞き取った言葉：「' + it.quote + '」　' : '') + '聞いたの：' + C.heardLabel(it.heardAt, now);
+    $('btn-cal').classList.toggle('hide', it.kind !== 'yotei');
+    $('btn-cal').textContent = it.status === 'calendar' ? '📅 もういちどカレンダーに入れる' : '📅 カレンダーに入れる';
+    $('confirm').classList.remove('open');
+    $('cal-date').value = it.date || it.anchor || C.ymd(now);
+    $('cal-time').value = it.time || '';
+    $('btn-star').textContent = it.starred ? '☆ 大事マークをはずす' : '⭐ 大事マーク（のこす）';
+    $('btn-kind').textContent = it.kind === 'yotei' ? '↔ これは「手順」のほうにゃ' : '↔ これは「予定」のほうにゃ';
+    openSheet('sheet-item');
+  }
+  function download(name, text, type){
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([text], {type:type}));
+    a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  }
+
+  /* ---- 聞く ---- */
+  let listening = false, wakeLock = null;
+  function setLive(text, on){ $('live').textContent = text; $('live').classList.toggle('on', !!on); }
+  function setListening(on){
+    listening = on;
+    $('btn-listen').classList.toggle('on', on);
+    $('btn-listen').textContent = on ? '👂 聞いてるにゃ…（とめる）' : '👂 聞いててにゃ';
+    setLive(on ? '（聞いてるにゃ…）' : '（いまは聞いてないにゃ）', on);
+    // 聞いてる間は画面を消さない（消えるとマイクが止まるため）
+    if (on && navigator.wakeLock) navigator.wakeLock.request('screen').then(w => { wakeLock = w; }).catch(() => {});
+    if (!on && wakeLock){ wakeLock.release().catch(() => {}); wakeLock = null; }
+  }
+  function toggleListen(){
+    const L = Listeners[ACTIVE_LISTENER];
+    if (listening){ L.stop(); setListening(false); flush(); return; }
+    if (!L.supported()){
+      toast('このブラウザは耳が使えないにゃ。Chromeで開くか、文字で入れてにゃ。');
+      openSheet('sheet-text');
+      return;
+    }
+    try {
+      L.start({
+        onInterim: t => { if (listening) setLive('… ' + t, true); },
+        onFinal:   t => { if (!t) return; if (listening) setLive('✓ ' + t, true); feed(t, 'mic'); },   // 空の結果は捨てる。止めた後に届いた分も拾う
+        onState:   on => { if (!on && listening) setListening(false); },
+        onError:   code => {
+          setListening(false);
+          toast(code === 'not-allowed' || code === 'service-not-allowed' ? 'マイクが許可されてないにゃ。ブラウザの設定を見てにゃ。'
+              : code === 'audio-capture' ? 'マイクが見つからないにゃ。'
+              : code === 'network' ? '文字起こしにつながらないにゃ（ネットが要るにゃ）。'
+              : '耳がうまく動かなかったにゃ（' + code + '）。');
+        }
+      });
+      setListening(true);
+    } catch(e){ toast('耳がうまく動かなかったにゃ。'); setListening(false); }
+  }
+
+  /* ---- 設定 ---- */
+  function renderSettings(){
+    const s = Settings.get();
+    document.querySelectorAll('#seg-extractor button').forEach(b => b.classList.toggle('on', b.dataset.v === s.extractor));
+    document.querySelectorAll('#seg-llmtype button').forEach(b => b.classList.toggle('on', b.dataset.v === s.llmType));
+    $('llm-fields').classList.toggle('hide', s.extractor !== 'llm');
+    $('llm-base-wrap').classList.toggle('hide', s.llmType === 'anthropic');
+    $('llm-base').value = s.llmBase; $('llm-model').value = s.llmModel; $('llm-key').value = s.llmKey;
+    $('llm-model').placeholder = s.llmType === 'anthropic' ? '例）claude-haiku-5-5' : '例）使いたいモデルの名前';
+  }
+
+  const SAMPLE = [
+    'あ、そうだ、明日の14時に歯医者だからね',
+    '木曜は山田さんとランチに行く約束してるよ',
+    '来週の火曜までに書類出さないと',
+    '燃えるゴミは毎週火曜と金曜の朝だよ',
+    '薬は食後に2錠飲んでね',
+    '日曜に実家に顔出そうか',
+    '今日はいい天気だね'
+  ].join('\n');
+
+  /* ---- つなぐ ---- */
+  function segInit(box, values, key){
+    values.forEach(v => {
+      const b = el('button', null, v);
+      b.addEventListener('click', () => { state[key] = state[key] === v ? null : v; segSync(); render(); });
+      box.appendChild(b);
+    });
+  }
+  function segSync(){
+    document.querySelectorAll('#seg-day button').forEach(b => b.classList.toggle('on', b.textContent === state.day));
+    document.querySelectorAll('#seg-band button').forEach(b => b.classList.toggle('on', b.textContent === state.band));
+  }
+  function init(){
+    tick(); setInterval(tick, 15000);
+    $('btn-open').addEventListener('click', () => go('s-main'));
+    $('tab-yotei').addEventListener('click', () => { state.tab = 'yotei'; render(); });
+    $('tab-tejun').addEventListener('click', () => { state.tab = 'tejun'; render(); });
+    $('btn-listen').addEventListener('click', toggleListen);
+    $('btn-text').addEventListener('click', () => openSheet('sheet-text'));
+    $('btn-gear').addEventListener('click', () => { renderSettings(); openSheet('sheet-settings'); });
+    $('chip-filter').addEventListener('click', () => openSheet('sheet-filter'));
+    $('chip-search').addEventListener('click', () => { openSheet('sheet-search'); $('q').focus(); });
+    $('bd').addEventListener('click', closeSheet);
+    document.querySelectorAll('[data-close]').forEach(b => b.addEventListener('click', closeSheet));
+
+    segInit($('seg-day'), DAYS, 'day');
+    segInit($('seg-band'), BANDS.map(b => b[0]), 'band');
+    $('btn-filter-clear').addEventListener('click', () => { state.day = state.band = null; segSync(); render(); closeSheet(); });
+    $('q').addEventListener('input', e => { state.q = e.target.value.trim(); render(); });
+    $('btn-search-clear').addEventListener('click', () => { state.q = ''; $('q').value = ''; render(); closeSheet(); });
+
+    // ratify
+    $('btn-cal').addEventListener('click', () => $('confirm').classList.toggle('open'));
+    $('btn-cal-go').addEventListener('click', () => {
+      const it = Store.get(state.cur), date = $('cal-date').value, time = $('cal-time').value || null;
+      if (!it) return;
+      if (!date){ toast('日にちを入れてにゃ。'); return; }
+      download('kiiteru_' + date + '.ics', C.buildICS(it, date, time, new Date()), 'text/calendar');
+      Store.update(it.id, {status:'calendar', date:date, time:time, approx:null, anchor:null, timeLabel:null, confirmed:true});
+      closeSheet(); render(); toast('カレンダー用のファイルを出したにゃ。開いて入れてにゃ。');
+    });
+    $('btn-star').addEventListener('click', () => {
+      const it = Store.get(state.cur); if (!it) return;
+      Store.update(it.id, {starred:!it.starred}); closeSheet(); render();
+    });
+    $('btn-trash').addEventListener('click', () => {
+      const it = Store.get(state.cur); if (!it) return;
+      const before = it.status;
+      Store.update(it.id, {status:'discarded', discardedAt:new Date().toISOString()});
+      closeSheet(); render();
+      toast('捨てたにゃ。', () => { Store.update(it.id, {status:before, discardedAt:null}); render(); });
+    });
+    $('btn-kind').addEventListener('click', () => {
+      const it = Store.get(state.cur); if (!it) return;
+      const to = it.kind === 'yotei' ? 'tejun' : 'yotei';
+      Store.update(it.id, {kind:to}); closeSheet(); render();
+      toast(to === 'tejun' ? '「手順」のほうに移したにゃ。' : '「予定」のほうに移したにゃ。');
+    });
+
+    // 文字で入れる
+    $('btn-sample').addEventListener('click', () => { $('text-in').value = SAMPLE; });
+    $('btn-text-go').addEventListener('click', () => {
+      const t = $('text-in').value;
+      if (!t.trim()){ toast('なにか入れてにゃ。'); return; }
+      $('text-in').value = ''; closeSheet(); feed(t, 'text');
+    });
+
+    // 設定
+    document.querySelectorAll('#seg-extractor button').forEach(b => b.addEventListener('click', () => { Settings.set({extractor:b.dataset.v}); renderSettings(); }));
+    document.querySelectorAll('#seg-llmtype button').forEach(b => b.addEventListener('click', () => { Settings.set({llmType:b.dataset.v}); renderSettings(); }));
+    $('llm-base').addEventListener('change', e => Settings.set({llmBase:e.target.value.trim() || DEFAULTS.llmBase}));
+    $('llm-model').addEventListener('change', e => Settings.set({llmModel:e.target.value.trim()}));
+    $('llm-key').addEventListener('change', e => Settings.set({llmKey:e.target.value.trim()}));
+    $('btn-export').addEventListener('click', () => download('kiiteru_data_' + C.ymd(new Date()) + '.json', Store.exportJSON(), 'application/json'));
+    let armed = false;
+    $('btn-clear').addEventListener('click', e => {                 // 二度押しで消す（確認ダイアログは使わない）
+      if (!armed){ armed = true; e.target.textContent = 'ほんとに消す？ もう一回押すにゃ'; setTimeout(() => { armed = false; e.target.textContent = 'ぜんぶ消す'; }, 4000); return; }
+      armed = false; e.target.textContent = 'ぜんぶ消す'; Store.clear(); render(); closeSheet(); toast('ぜんぶ消したにゃ。');
+    });
+
+    // 開き直すたび、"つぎは"がそっと出る
+    document.addEventListener('visibilitychange', () => { if (!document.hidden){ tick(); render(); peek(); } });
+    render();
+  }
+  init();
+
+  // コンソールから触れるように（作る人向け）
+  window.Kiiteru = {Core:C, Store:Store, Settings:Settings, Listeners:Listeners, Extractors:Extractors, feed:feed, render:render};
+})();
+</script>
+</body>
+</html>
